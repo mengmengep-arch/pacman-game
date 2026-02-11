@@ -1,0 +1,695 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>PacMan</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body {
+    width: 100%; height: 100%;
+    background: #000;
+    overflow: hidden;
+    touch-action: none;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+}
+#wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: 100%; height: 100%;
+}
+canvas {
+    display: block;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+}
+#mobile-controls {
+    display: none;
+    position: fixed;
+    bottom: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 10;
+}
+#mobile-controls button {
+    width: 56px; height: 56px;
+    border-radius: 50%;
+    border: 2px solid #2121de;
+    background: rgba(33,33,222,0.25);
+    color: #fff;
+    font-size: 24px;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+}
+#mobile-controls button:active { background: rgba(33,33,222,0.6); }
+.dpad { display: grid; grid-template-columns: 56px 56px 56px; grid-template-rows: 56px 56px 56px; gap: 4px; }
+.dpad .empty { visibility: hidden; }
+@media (pointer: coarse) {
+    #mobile-controls { display: block; }
+}
+</style>
+</head>
+<body>
+<div id="wrap">
+    <canvas id="c"></canvas>
+</div>
+<div id="mobile-controls">
+    <div class="dpad">
+        <div class="empty"></div>
+        <button id="btn-up">&#9650;</button>
+        <div class="empty"></div>
+        <button id="btn-left">&#9664;</button>
+        <div class="empty"></div>
+        <button id="btn-right">&#9654;</button>
+        <div class="empty"></div>
+        <button id="btn-down">&#9660;</button>
+        <div class="empty"></div>
+    </div>
+</div>
+<script>
+// =========================================================================
+// PacMan – HTML5 Canvas Edition
+// =========================================================================
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+
+// --- Constants -----------------------------------------------------------
+const TILE = 24;
+const COLS = 28;
+const MAZE_ROWS = 24;
+const HUD_ROWS = 4;
+const TOTAL_ROWS = MAZE_ROWS + HUD_ROWS;
+const W = COLS * TILE;
+const H = TOTAL_ROWS * TILE;
+const HUD_H = HUD_ROWS * TILE;
+const FPS = 60;
+
+canvas.width = W;
+canvas.height = H;
+
+// Responsive scaling
+function resize() {
+    const scaleX = window.innerWidth / W;
+    const scaleY = (window.innerHeight - (('ontouchstart' in window) ? 180 : 0)) / H;
+    const s = Math.min(scaleX, scaleY, 2);
+    canvas.style.width = (W * s) + 'px';
+    canvas.style.height = (H * s) + 'px';
+}
+window.addEventListener('resize', resize);
+resize();
+
+// Colours
+const BLACK = '#000';
+const DARK_BLUE = '#0a0a28';
+const WALL_BLUE = '#2121de';
+const WALL_HL = '#5050ff';
+const DOT_COL = '#ffb7ae';
+const YELLOW = '#ffff00';
+const WHITE = '#fff';
+const RED = '#ff0000';
+const PINK = '#ffb8ff';
+const CYAN = '#00ffff';
+const ORANGE = '#ffb852';
+const GHOST_BLUE_C = '#2121ff';
+const FRUIT_RED = '#ff3232';
+const FRUIT_GREEN = '#32c832';
+
+// Directions: [dx, dy]
+const UP = [0, -1], DOWN = [0, 1], LEFT = [-1, 0], RIGHT = [1, 0], STOP = [0, 0];
+
+// Ghost states
+const GS = { SCATTER: 0, CHASE: 1, FRIGHTENED: 2, EATEN: 3, IN_HOUSE: 4 };
+// Game states
+const STATE = { READY: 0, PLAYING: 1, DYING: 2, GAME_OVER: 3, LEVEL_COMPLETE: 4 };
+
+// --- Maze ----------------------------------------------------------------
+const MAZE_STR = [
+    "1111111111111111111111111111",
+    "1000000000001110000000000001",
+    "1011101111001110011110111001",
+    "1311100000000000000000013001",
+    "1011101011111111101011101001",
+    "1000000010001110010000000001",
+    "1011101110011110011101110001",
+    "1011100000001110000000110001",
+    "1000001011104401011010000001",
+    "1111001010044040010100111111",
+    "7770001010555555010100007770",
+    "1111001000500005000100111111",
+    "7770001010500005010100007770",
+    "1111001010555555010100111111",
+    "4444000000044040000000004444",
+    "1111001011111111101001111111",
+    "1000000000001110000000000001",
+    "1011101111001110011110111001",
+    "1300100000000400000000010031",
+    "1110101011111111101011010111",
+    "1000000010001110010000000001",
+    "1011111110011110011111110001",
+    "1000000000000000000000000001",
+    "1111111111111111111111111111",
+];
+
+function buildMaze() {
+    return MAZE_STR.map(r => r.split('').map(Number));
+}
+
+// --- Helpers -------------------------------------------------------------
+function g2p(col, row) {                      // grid -> pixel centre
+    return [col * TILE + TILE / 2, row * TILE + HUD_H + TILE / 2];
+}
+function p2g(x, y) {                          // pixel -> grid
+    return [Math.floor(x / TILE), Math.floor((y - HUD_H) / TILE)];
+}
+function canMove(maze, c, r) {
+    if (r < 0 || r >= MAZE_ROWS) return false;
+    if (c < 0 || c >= COLS) return true;       // tunnel
+    const v = maze[r][c];
+    return v !== 1 && v !== 5;
+}
+function isWall(maze, c, r) {
+    if (r < 0 || r >= MAZE_ROWS || c < 0 || c >= COLS) return false;
+    return maze[r][c] === 1 || maze[r][c] === 5;
+}
+function dirEq(a, b) { return a[0] === b[0] && a[1] === b[1]; }
+function dist2(a, b) { return (a[0]-b[0])**2 + (a[1]-b[1])**2; }
+
+// --- Drawing helpers -----------------------------------------------------
+function drawWall(c, r, maze, flash) {
+    const x = c * TILE, y = r * TILE + HUD_H;
+    if (flash) {
+        ctx.fillStyle = WHITE; ctx.fillRect(x, y, TILE, TILE);
+        ctx.fillStyle = BLACK; ctx.fillRect(x+2, y+2, TILE-4, TILE-4);
+        return;
+    }
+    ctx.fillStyle = WALL_BLUE; ctx.fillRect(x, y, TILE, TILE);
+    ctx.fillStyle = DARK_BLUE; ctx.fillRect(x+2, y+2, TILE-4, TILE-4);
+    // highlight edges toward empty
+    ctx.strokeStyle = WALL_HL; ctx.lineWidth = 2;
+    const dirs = [[-1,0],[1,0],[0,-1],[0,1]];
+    for (const [dx,dy] of dirs) {
+        if (!isWall(maze, c+dx, r+dy)) {
+            ctx.beginPath();
+            if (dx===-1) { ctx.moveTo(x+1, y); ctx.lineTo(x+1, y+TILE); }
+            else if (dx===1) { ctx.moveTo(x+TILE-2, y); ctx.lineTo(x+TILE-2, y+TILE); }
+            else if (dy===-1) { ctx.moveTo(x, y+1); ctx.lineTo(x+TILE, y+1); }
+            else { ctx.moveTo(x, y+TILE-2); ctx.lineTo(x+TILE, y+TILE-2); }
+            ctx.stroke();
+        }
+    }
+}
+
+// --- PacMan --------------------------------------------------------------
+class PacMan {
+    constructor(col, row) {
+        this.sc = col; this.sr = row;
+        this.reset();
+    }
+    reset() {
+        [this.x, this.y] = g2p(this.sc, this.sr);
+        this.dir = STOP; this.nextDir = STOP;
+        this.speed = 2;
+        this.mouth = 0; this.mouthOpening = true;
+        this.alive = true; this.deathFrame = 0;
+        this.animT = 0;
+    }
+    setDir(d) { this.nextDir = d; }
+    update(maze) {
+        if (!this.alive) return;
+        this.animT++;
+        if (this.animT % 3 === 0) {
+            if (this.mouthOpening) { this.mouth += 8; if (this.mouth >= 45) this.mouthOpening = false; }
+            else { this.mouth -= 8; if (this.mouth <= 5) this.mouthOpening = true; }
+        }
+        const [cx, cy] = p2g(this.x, this.y);
+        const [px, py] = g2p(cx, cy);
+        if (Math.abs(this.x-px) <= this.speed && Math.abs(this.y-py) <= this.speed) {
+            this.x = px; this.y = py;
+            if (canMove(maze, cx+this.nextDir[0], cy+this.nextDir[1])) this.dir = this.nextDir;
+            if (!canMove(maze, cx+this.dir[0], cy+this.dir[1])) this.dir = STOP;
+        }
+        if (!dirEq(this.dir, STOP)) {
+            this.x += this.dir[0] * this.speed;
+            this.y += this.dir[1] * this.speed;
+        }
+        // tunnel wrap
+        if (this.x < -TILE/2) this.x = COLS*TILE + TILE/2;
+        else if (this.x > COLS*TILE + TILE/2) this.x = -TILE/2;
+    }
+    draw() {
+        if (!this.alive) { this._drawDeath(); return; }
+        let startA = 0;
+        if (dirEq(this.dir, RIGHT)||dirEq(this.dir, STOP)) startA = this.mouth;
+        else if (dirEq(this.dir, LEFT)) startA = 180 + this.mouth;
+        else if (dirEq(this.dir, UP)) startA = 90 + this.mouth;
+        else if (dirEq(this.dir, DOWN)) startA = 270 + this.mouth;
+        let ext = 360 - 2*this.mouth; if (ext<=0) ext=1;
+        const r = TILE/2 + 2;
+        const s = startA * Math.PI/180, e = (startA+ext) * Math.PI/180;
+        ctx.fillStyle = YELLOW;
+        ctx.beginPath();
+        ctx.moveTo(this.x, this.y);
+        ctx.arc(this.x, this.y, r, -e, -s);   // canvas Y is flipped vs math
+        ctx.closePath(); ctx.fill();
+    }
+    _drawDeath() {
+        const p = Math.min(this.deathFrame / 60, 1);
+        const ext = 360 - 360*p; if (ext<=0) return;
+        const s = (90*p) * Math.PI/180;
+        const e = s + ext * Math.PI/180;
+        const r = TILE/2 + 2;
+        ctx.fillStyle = YELLOW;
+        ctx.beginPath(); ctx.moveTo(this.x, this.y);
+        ctx.arc(this.x, this.y, r, -e, -s);
+        ctx.closePath(); ctx.fill();
+    }
+}
+
+// --- Ghost ---------------------------------------------------------------
+const GHOST_COLORS = { blinky: RED, pinky: PINK, inky: CYAN, clyde: ORANGE };
+const SCATTER_TGT = { blinky:[25,0], pinky:[2,0], inky:[27,23], clyde:[0,23] };
+const RELEASE_DOTS = { blinky:0, pinky:7, inky:17, clyde:32 };
+
+class Ghost {
+    constructor(name, col, row, hc, hr) {
+        this.name = name; this.color = GHOST_COLORS[name];
+        this.sc = col; this.sr = row; this.hc = hc; this.hr = hr;
+        this.reset();
+    }
+    reset() {
+        [this.x, this.y] = g2p(this.sc, this.sr);
+        this.dir = UP; this.speed = 2;
+        this.state = this.name==='blinky' ? GS.SCATTER : GS.IN_HOUSE;
+        this.fTimer = 0; this.fFlash = false;
+        this.animT = 0;
+    }
+    getTarget(pac, blinkyPos) {
+        const [pc, pr] = p2g(pac.x, pac.y);
+        if (this.state===GS.SCATTER) return SCATTER_TGT[this.name];
+        if (this.state===GS.FRIGHTENED) return [Math.random()*COLS|0, Math.random()*MAZE_ROWS|0];
+        if (this.state===GS.EATEN) return [this.hc, this.hr];
+        // Chase
+        if (this.name==='blinky') return [pc, pr];
+        if (this.name==='pinky') return [pc+pac.dir[0]*4, pr+pac.dir[1]*4];
+        if (this.name==='inky') {
+            const ac=pc+pac.dir[0]*2, ar=pr+pac.dir[1]*2;
+            return [ac+(ac-blinkyPos[0]), ar+(ar-blinkyPos[1])];
+        }
+        // clyde
+        const [gc,gr] = p2g(this.x, this.y);
+        return Math.hypot(pc-gc, pr-gr)>8 ? [pc,pr] : SCATTER_TGT.clyde;
+    }
+    update(maze, pac, blinkyPos, mode, dotsEaten) {
+        this.animT++;
+        if (this.state===GS.IN_HOUSE) {
+            const cy = g2p(this.sc, this.sr)[1];
+            this.y = cy + Math.sin(this.animT*0.1)*5;
+            if (dotsEaten >= RELEASE_DOTS[this.name]) {
+                this.state = GS.SCATTER;
+                [this.x, this.y] = g2p(this.hc, this.hr-3);
+            }
+            return;
+        }
+        if (this.state===GS.FRIGHTENED) {
+            this.fTimer--;
+            if (this.fTimer<=0) this.state = mode==='chase' ? GS.CHASE : GS.SCATTER;
+            this.fFlash = this.fTimer<120 && ((this.fTimer/15|0)%2===0);
+        }
+        if (this.state===GS.EATEN) {
+            this.speed = 4;
+            const [tx,ty] = g2p(this.hc, this.hr);
+            if (Math.abs(this.x-tx)<5 && Math.abs(this.y-ty)<5) {
+                this.x=tx; this.y=ty; this.state=GS.SCATTER; this.speed=2; return;
+            }
+        } else {
+            this.speed = this.state===GS.FRIGHTENED ? 1 : 2;
+        }
+        const [cx,cy] = p2g(this.x, this.y);
+        const [px,py] = g2p(cx, cy);
+        if (Math.abs(this.x-px)<=this.speed && Math.abs(this.y-py)<=this.speed) {
+            this.x=px; this.y=py;
+            const tgt = this.getTarget(pac, blinkyPos);
+            const opp = [-this.dir[0], -this.dir[1]];
+            let dirs = [];
+            for (const d of [UP,LEFT,DOWN,RIGHT]) {
+                if (dirEq(d,opp) && this.state!==GS.FRIGHTENED) continue;
+                const nc=cx+d[0], nr=cy+d[1];
+                if (canMove(maze,nc,nr)) {
+                    if (nr>=0 && nr<MAZE_ROWS && nc>=0 && nc<COLS && maze[nr][nc]===5) continue;
+                    dirs.push(d);
+                }
+            }
+            if (!dirs.length) {
+                for (const d of [UP,LEFT,DOWN,RIGHT]) {
+                    if (canMove(maze,cx+d[0],cy+d[1])) dirs.push(d);
+                }
+            }
+            if (dirs.length) {
+                if (this.state===GS.FRIGHTENED) {
+                    this.dir = dirs[Math.random()*dirs.length|0];
+                } else {
+                    let best=dirs[0], bd=1e9;
+                    for (const d of dirs) {
+                        const dd = dist2([cx+d[0],cy+d[1]], tgt);
+                        if (dd<bd) { bd=dd; best=d; }
+                    }
+                    this.dir = best;
+                }
+            }
+        }
+        this.x += this.dir[0]*this.speed;
+        this.y += this.dir[1]*this.speed;
+        if (this.x < -TILE/2) this.x = COLS*TILE+TILE/2;
+        else if (this.x > COLS*TILE+TILE/2) this.x = -TILE/2;
+    }
+    draw() {
+        const cx = this.x|0, cy = this.y|0, r = TILE/2+1;
+        if (this.state===GS.EATEN) { this._drawEyes(cx,cy); return; }
+        const col = this.state===GS.FRIGHTENED ? (this.fFlash ? WHITE : GHOST_BLUE_C) : this.color;
+        // body
+        ctx.fillStyle = col;
+        ctx.beginPath(); ctx.arc(cx, cy-2, r, Math.PI, 0); ctx.fill();
+        ctx.fillRect(cx-r, cy-2, r*2, r);
+        // wavy bottom
+        const wo = (this.animT>>3) & 1;
+        for (let i=0; i<3; i++) {
+            const wx = cx - r + i*(r*2/3|0) + (r/3|0);
+            const wy = cy + r - 3;
+            const wr = r/3|0;
+            if ((i+wo)%2===0) {
+                ctx.beginPath(); ctx.arc(wx, wy, wr, 0, Math.PI*2); ctx.fill();
+            } else {
+                ctx.fillStyle = DARK_BLUE;
+                ctx.beginPath(); ctx.arc(wx, wy, wr, 0, Math.PI*2); ctx.fill();
+                ctx.fillStyle = col;
+                ctx.fillRect(wx-wr, wy-wr, wr*2, wr);
+            }
+        }
+        this._drawEyes(cx, cy);
+        if (this.state===GS.FRIGHTENED) {
+            ctx.strokeStyle = this.fFlash ? RED : WHITE;
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            for (let i=0;i<5;i++) {
+                const mx = cx-5+i*3, my = cy+2+(i%2===0?-2:2);
+                i===0 ? ctx.moveTo(mx,my) : ctx.lineTo(mx,my);
+            }
+            ctx.stroke();
+        }
+    }
+    _drawEyes(cx, cy) {
+        for (const side of [-1,1]) {
+            const ex=cx+side*4, ey=cy-3;
+            ctx.fillStyle = WHITE;
+            ctx.beginPath(); ctx.ellipse(ex, ey, 4, 3.5, 0, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = '#2121de';
+            ctx.beginPath(); ctx.arc(ex+this.dir[0]*2, ey+this.dir[1]*2, 2, 0, Math.PI*2); ctx.fill();
+        }
+    }
+}
+
+// --- Fruit ---------------------------------------------------------------
+const FRUITS = [
+    {name:'cherry',color:FRUIT_RED,pts:100},
+    {name:'strawberry',color:FRUIT_RED,pts:300},
+    {name:'orange',color:ORANGE,pts:500},
+    {name:'apple',color:FRUIT_RED,pts:700},
+    {name:'melon',color:FRUIT_GREEN,pts:1000},
+];
+
+class Fruit {
+    constructor(col, row, level) {
+        [this.x, this.y] = g2p(col, row);
+        this.data = FRUITS[Math.min(level, FRUITS.length-1)];
+        this.timer = 600; this.active = true;
+        this.collected = false; this.displayT = 0;
+    }
+    update() {
+        if (!this.active) { if (this.collected && this.displayT>0) this.displayT--; return; }
+        if (--this.timer<=0) this.active = false;
+    }
+    draw() {
+        if (this.collected && this.displayT>0) {
+            ctx.fillStyle = WHITE; ctx.font = '16px monospace'; ctx.textAlign = 'center';
+            ctx.fillText(this.data.pts, this.x, this.y+5); return;
+        }
+        if (!this.active) return;
+        const r = TILE/2-2;
+        ctx.fillStyle = this.data.color;
+        ctx.beginPath(); ctx.arc(this.x, this.y, r, 0, Math.PI*2); ctx.fill();
+        ctx.strokeStyle = FRUIT_GREEN; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(this.x, this.y-r); ctx.lineTo(this.x+2, this.y-r-4); ctx.stroke();
+        ctx.fillStyle = WHITE;
+        ctx.beginPath(); ctx.arc(this.x-2, this.y-2, 2, 0, Math.PI*2); ctx.fill();
+    }
+}
+
+// --- Floating Score ------------------------------------------------------
+class FloatingScore {
+    constructor(x,y,pts) { this.x=x; this.y=y; this.pts=pts; this.t=60; }
+    update() { this.t--; this.y-=0.3; }
+    draw() {
+        if (this.t<=0) return;
+        ctx.fillStyle = CYAN; ctx.font = '14px monospace'; ctx.textAlign = 'center';
+        ctx.fillText(this.pts, this.x, this.y);
+    }
+}
+
+// --- Game ----------------------------------------------------------------
+let maze, pacman, ghosts, score, highScore, lives, level;
+let state, readyT, dotsEaten, totalDots, ghostCombo;
+let floats, fruit, fruitSpawned, modeTimer, mode, flashT, tick;
+
+highScore = parseInt(localStorage.getItem('pacman_hi') || '0');
+
+function initGame() {
+    maze = buildMaze();
+    score = 0; lives = 3; level = 0;
+    dotsEaten = 0; totalDots = countDots();
+    ghostCombo = 0; floats = [];
+    fruit = null; fruitSpawned = false;
+    modeTimer = 0; mode = 'scatter'; flashT = 0; tick = 0;
+    resetPositions();
+    state = STATE.READY; readyT = 120;
+}
+
+function countDots() {
+    let n = 0;
+    for (const row of maze) for (const c of row) if (c===0||c===3) n++;
+    return n;
+}
+
+function resetPositions() {
+    pacman = new PacMan(14, 18);
+    const hc=14, hr=11;
+    ghosts = [
+        new Ghost('blinky', hc, hr-3, hc, hr),
+        new Ghost('pinky',  hc, hr,   hc, hr),
+        new Ghost('inky',   hc-2, hr, hc, hr),
+        new Ghost('clyde',  hc+2, hr, hc, hr),
+    ];
+    state = STATE.READY; readyT = 120;
+}
+
+function nextLevel() {
+    level++; maze = buildMaze();
+    totalDots = countDots(); dotsEaten = 0;
+    fruit = null; fruitSpawned = false;
+    modeTimer = 0; mode = 'scatter';
+    resetPositions();
+}
+
+// --- Input ---------------------------------------------------------------
+let inputDir = null;
+document.addEventListener('keydown', e => {
+    if (state===STATE.GAME_OVER && (e.key==='Enter'||e.key===' ')) { initGame(); return; }
+    if (e.key==='ArrowUp'||e.key==='w') inputDir = UP;
+    else if (e.key==='ArrowDown'||e.key==='s') inputDir = DOWN;
+    else if (e.key==='ArrowLeft'||e.key==='a') inputDir = LEFT;
+    else if (e.key==='ArrowRight'||e.key==='d') inputDir = RIGHT;
+    e.preventDefault();
+});
+
+// Mobile buttons
+document.getElementById('btn-up').addEventListener('touchstart', e => { e.preventDefault(); inputDir = UP; });
+document.getElementById('btn-down').addEventListener('touchstart', e => { e.preventDefault(); inputDir = DOWN; });
+document.getElementById('btn-left').addEventListener('touchstart', e => { e.preventDefault(); inputDir = LEFT; });
+document.getElementById('btn-right').addEventListener('touchstart', e => { e.preventDefault(); inputDir = RIGHT; });
+
+// Swipe support
+let touchStartX = 0, touchStartY = 0;
+canvas.addEventListener('touchstart', e => {
+    const t = e.touches[0];
+    touchStartX = t.clientX; touchStartY = t.clientY;
+    e.preventDefault();
+}, { passive: false });
+canvas.addEventListener('touchend', e => {
+    if (state===STATE.GAME_OVER) { initGame(); return; }
+    const t = e.changedTouches[0];
+    const dx = t.clientX - touchStartX, dy = t.clientY - touchStartY;
+    if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
+    if (Math.abs(dx) > Math.abs(dy)) inputDir = dx > 0 ? RIGHT : LEFT;
+    else inputDir = dy > 0 ? DOWN : UP;
+    e.preventDefault();
+}, { passive: false });
+
+// --- Update --------------------------------------------------------------
+function update() {
+    tick++;
+    if (inputDir) { pacman.setDir(inputDir); inputDir = null; }
+
+    if (state===STATE.READY) { if (--readyT<=0) state = STATE.PLAYING; return; }
+    if (state===STATE.DYING) {
+        pacman.deathFrame++;
+        if (pacman.deathFrame >= 60) {
+            lives--;
+            if (lives<=0) {
+                state = STATE.GAME_OVER;
+                if (score>highScore) { highScore=score; localStorage.setItem('pacman_hi', highScore); }
+            } else resetPositions();
+        }
+        return;
+    }
+    if (state===STATE.LEVEL_COMPLETE) { if (--flashT<=0) nextLevel(); return; }
+    if (state!==STATE.PLAYING) return;
+
+    // Mode switching
+    modeTimer++;
+    if (mode==='scatter' && modeTimer>420) { mode='chase'; modeTimer=0; }
+    else if (mode==='chase' && modeTimer>1200) { mode='scatter'; modeTimer=0; }
+
+    pacman.update(maze);
+
+    // Eat dots
+    const [pc,pr] = p2g(pacman.x, pacman.y);
+    if (pr>=0 && pr<MAZE_ROWS && pc>=0 && pc<COLS) {
+        const cell = maze[pr][pc];
+        if (cell===0) { maze[pr][pc]=4; score+=10; dotsEaten++; }
+        else if (cell===3) {
+            maze[pr][pc]=4; score+=50; dotsEaten++; ghostCombo=0;
+            for (const g of ghosts) {
+                if (g.state!==GS.EATEN && g.state!==GS.IN_HOUSE) {
+                    g.state = GS.FRIGHTENED; g.fTimer = 360;
+                    g.dir = [-g.dir[0], -g.dir[1]];
+                }
+            }
+        }
+    }
+
+    // Fruit
+    if (!fruitSpawned && dotsEaten >= totalDots/3) { fruit = new Fruit(14,14,level); fruitSpawned = true; }
+    if (fruit) {
+        fruit.update();
+        if (fruit.active) {
+            const d = Math.hypot(pacman.x-fruit.x, pacman.y-fruit.y);
+            if (d < TILE) {
+                score += fruit.data.pts; fruit.active=false;
+                fruit.collected=true; fruit.displayT=60;
+            }
+        }
+    }
+
+    // Ghosts
+    const bPos = p2g(ghosts[0].x, ghosts[0].y);
+    for (const g of ghosts) {
+        g.update(maze, pacman, bPos, mode, dotsEaten);
+        const d = Math.hypot(g.x-pacman.x, g.y-pacman.y);
+        if (d < TILE-2) {
+            if (g.state===GS.FRIGHTENED) {
+                g.state = GS.EATEN; ghostCombo++;
+                const pts = 200 * (1 << (ghostCombo-1));
+                score += pts;
+                floats.push(new FloatingScore(g.x, g.y, pts));
+            } else if (g.state!==GS.EATEN && g.state!==GS.IN_HOUSE) {
+                pacman.alive = false; state = STATE.DYING; pacman.deathFrame = 0;
+            }
+        }
+    }
+
+    floats = floats.filter(f => { f.update(); return f.t > 0; });
+
+    if (dotsEaten >= totalDots) { state = STATE.LEVEL_COMPLETE; flashT = 120; }
+}
+
+// --- Draw ----------------------------------------------------------------
+function draw() {
+    ctx.fillStyle = BLACK; ctx.fillRect(0, 0, W, H);
+
+    // Maze
+    const flash = state===STATE.LEVEL_COMPLETE && ((flashT/15|0)%2===0);
+    for (let r=0; r<MAZE_ROWS; r++) {
+        for (let c=0; c<COLS; c++) {
+            const v = maze[r][c];
+            const x = c*TILE, y = r*TILE+HUD_H;
+            if (v===1 || v===5) { drawWall(c, r, maze, flash); }
+            else if (v===0) {
+                ctx.fillStyle = DOT_COL;
+                ctx.beginPath(); ctx.arc(x+TILE/2, y+TILE/2, 2, 0, Math.PI*2); ctx.fill();
+            } else if (v===3) {
+                const pulse = Math.abs(Math.sin(tick*0.08))*3 + 4;
+                ctx.fillStyle = DOT_COL;
+                ctx.beginPath(); ctx.arc(x+TILE/2, y+TILE/2, pulse, 0, Math.PI*2); ctx.fill();
+            }
+        }
+    }
+
+    if (fruit) fruit.draw();
+    pacman.draw();
+    if (state!==STATE.LEVEL_COMPLETE) for (const g of ghosts) g.draw();
+    for (const f of floats) f.draw();
+
+    // HUD
+    ctx.fillStyle = BLACK; ctx.fillRect(0, 0, W, HUD_H);
+    ctx.fillStyle = WHITE; ctx.font = 'bold 22px monospace'; ctx.textAlign = 'left';
+    ctx.fillText('SCORE  ' + String(score).padStart(8), 10, 24);
+    ctx.fillStyle = '#b4b4b4'; ctx.font = '16px monospace'; ctx.textAlign = 'center';
+    ctx.fillText('HIGH SCORE  ' + String(highScore).padStart(8), W/2, 18);
+    ctx.fillStyle = CYAN; ctx.font = '16px monospace'; ctx.textAlign = 'right';
+    ctx.fillText('LEVEL ' + (level+1), W-10, 18);
+
+    // Lives
+    for (let i=0; i<lives-1; i++) {
+        const lx = 20+i*28, ly = HUD_H-24;
+        ctx.fillStyle = YELLOW; ctx.beginPath(); ctx.moveTo(lx, ly);
+        ctx.arc(lx, ly, 9, Math.PI/6, -Math.PI/6);
+        ctx.closePath(); ctx.fill();
+    }
+
+    // Separator
+    ctx.strokeStyle = WALL_BLUE; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(0, HUD_H-1); ctx.lineTo(W, HUD_H-1); ctx.stroke();
+
+    // Overlays
+    ctx.textAlign = 'center';
+    if (state===STATE.READY) {
+        ctx.fillStyle = YELLOW; ctx.font = 'bold 36px monospace';
+        ctx.fillText('READY!', W/2, H/2+10);
+    } else if (state===STATE.GAME_OVER) {
+        ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(0, 0, W, H);
+        ctx.fillStyle = RED; ctx.font = 'bold 40px monospace';
+        ctx.fillText('GAME OVER', W/2, H/2-30);
+        ctx.fillStyle = WHITE; ctx.font = '24px monospace';
+        ctx.fillText('Score: ' + score, W/2, H/2+10);
+        const alpha = Math.abs(Math.sin(tick*0.05));
+        ctx.globalAlpha = alpha;
+        ctx.font = '18px monospace';
+        ctx.fillText('Tap or press ENTER to restart', W/2, H/2+50);
+        ctx.globalAlpha = 1;
+    }
+}
+
+// --- Game Loop -----------------------------------------------------------
+initGame();
+function loop() {
+    update();
+    draw();
+    requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
