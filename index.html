@@ -221,36 +221,83 @@ class PacMan {
     setDir(d) { this.nextDir = d; }
     update(maze) {
         if (!this.alive) return;
-        // Animate mouth only when moving
         this.animT++;
         if (this.animT % 3 === 0) {
             if (this.mouthOpening) { this.mouth += 8; if (this.mouth >= 45) this.mouthOpening = false; }
             else { this.mouth -= 8; if (this.mouth <= 5) this.mouthOpening = true; }
         }
-        const [cx, cy] = p2g(this.x, this.y);
-        const [px, py] = g2p(cx, cy);
-        const atCenter = Math.abs(this.x-px) <= this.speed && Math.abs(this.y-py) <= this.speed;
-        if (atCenter) {
-            this.x = px; this.y = py;
-            // Try the queued next direction
-            const nx = cx + this.nextDir[0], ny = cy + this.nextDir[1];
-            if (canMove(maze, nx, ny)) {
-                this.dir = this.nextDir;
+
+        // Grid-based movement: move tile by tile
+        // Current grid cell (nearest)
+        const gcol = Math.round((this.x - TILE/2) / TILE);
+        const grow = Math.round((this.y - HUD_H - TILE/2) / TILE);
+        const centerX = gcol * TILE + TILE / 2;
+        const centerY = grow * TILE + HUD_H + TILE / 2;
+
+        // Are we exactly on a tile center?
+        const onCenterX = Math.abs(this.x - centerX) < 1;
+        const onCenterY = Math.abs(this.y - centerY) < 1;
+        const onCenter = onCenterX && onCenterY;
+
+        if (onCenter) {
+            // Snap to exact center
+            this.x = centerX;
+            this.y = centerY;
+
+            // Try queued direction
+            if (!dirEq(this.nextDir, STOP)) {
+                const nc = gcol + this.nextDir[0];
+                const nr = grow + this.nextDir[1];
+                if (canMove(maze, nc, nr)) {
+                    this.dir = [...this.nextDir];
+                }
             }
+
             // If current direction is blocked, stop
-            const mx = cx + this.dir[0], my = cy + this.dir[1];
-            if (!canMove(maze, mx, my)) {
-                this.dir = STOP;
+            if (!dirEq(this.dir, STOP)) {
+                const nc = gcol + this.dir[0];
+                const nr = grow + this.dir[1];
+                if (!canMove(maze, nc, nr)) {
+                    this.dir = [...STOP];
+                }
+            }
+        } else {
+            // Mid-tile: only allow turning if changing to perpendicular axis and aligned
+            if (!dirEq(this.nextDir, STOP) && !dirEq(this.nextDir, this.dir)) {
+                // Horizontal movement, want to go vertical?
+                if (this.dir[0] !== 0 && this.nextDir[1] !== 0 && onCenterY) {
+                    const nc = gcol + this.nextDir[0];
+                    const nr = grow + this.nextDir[1];
+                    if (Math.abs(this.x - centerX) < this.speed + 1 && canMove(maze, nc, nr)) {
+                        this.x = centerX;
+                        this.dir = [...this.nextDir];
+                    }
+                }
+                // Vertical movement, want to go horizontal?
+                if (this.dir[1] !== 0 && this.nextDir[0] !== 0 && onCenterX) {
+                    const nc = gcol + this.nextDir[0];
+                    const nr = grow + this.nextDir[1];
+                    if (Math.abs(this.y - centerY) < this.speed + 1 && canMove(maze, nc, nr)) {
+                        this.y = centerY;
+                        this.dir = [...this.nextDir];
+                    }
+                }
+                // Reverse direction is always allowed
+                if (this.dir[0] === -this.nextDir[0] && this.dir[1] === -this.nextDir[1]) {
+                    this.dir = [...this.nextDir];
+                }
             }
         }
-        // Move
+
+        // Apply movement
         if (!dirEq(this.dir, STOP)) {
             this.x += this.dir[0] * this.speed;
             this.y += this.dir[1] * this.speed;
         }
+
         // Tunnel wrap
-        if (this.x < -TILE/2) this.x = COLS*TILE + TILE/2;
-        else if (this.x > COLS*TILE + TILE/2) this.x = -TILE/2;
+        if (this.x < -TILE/2) this.x = COLS * TILE + TILE/2;
+        else if (this.x > COLS * TILE + TILE/2) this.x = -TILE/2;
     }
     draw() {
         if (!this.alive) { this._drawDeath(); return; }
