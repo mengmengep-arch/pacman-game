@@ -127,29 +127,30 @@ const GS = { SCATTER: 0, CHASE: 1, FRIGHTENED: 2, EATEN: 3, IN_HOUSE: 4 };
 const STATE = { READY: 0, PLAYING: 1, DYING: 2, GAME_OVER: 3, LEVEL_COMPLETE: 4 };
 
 // --- Maze ----------------------------------------------------------------
+// 1=wall 0=dot 3=power pellet 4=empty 5=ghost-house-wall 7=tunnel
 const MAZE_STR = [
     "1111111111111111111111111111",
-    "1000000000001110000000000001",
-    "1011101111001110011110111001",
-    "1311100000000000000000013001",
-    "1011101011111111101011101001",
-    "1000000010001110010000000001",
-    "1011101110011110011101110001",
-    "1011100000001110000000110001",
-    "1000001011104401011010000001",
-    "1111001010044040010100111111",
-    "7770001010555555010100007770",
-    "1111001000500005000100111111",
-    "7770001010500005010100007770",
-    "1111001010555555010100111111",
-    "4444000000044040000000004444",
-    "1111001011111111101001111111",
-    "1000000000001110000000000001",
-    "1011101111001110011110111001",
-    "1300100000000400000000010031",
-    "1110101011111111101011010111",
-    "1000000010001110010000000001",
-    "1011111110011110011111110001",
+    "1000000000001100000000000001",
+    "1011101111001100111101110001",
+    "1311101111001100111101110031",
+    "1000000000000000000000000001",
+    "1011101101111111011011101001",
+    "1000000100001100010000000001",
+    "1111101111401100141111011111",
+    "4441100000400000040000114444",
+    "1111101011555555110101111111",
+    "7770000010500005010000007770",
+    "1111101010500005010101111111",
+    "7770000010555555010000007770",
+    "1111101000000000000101111111",
+    "4441100101111111010011004444",
+    "1111100000001100000001111111",
+    "1000000111001100111000000001",
+    "1011100000000000000000111001",
+    "1300101101111111011011010031",
+    "1110100100001100010010010111",
+    "1000000000001100000000000001",
+    "1011111111001100111111110001",
     "1000000000000000000000000001",
     "1111111111111111111111111111",
 ];
@@ -220,6 +221,7 @@ class PacMan {
     setDir(d) { this.nextDir = d; }
     update(maze) {
         if (!this.alive) return;
+        // Animate mouth only when moving
         this.animT++;
         if (this.animT % 3 === 0) {
             if (this.mouthOpening) { this.mouth += 8; if (this.mouth >= 45) this.mouthOpening = false; }
@@ -227,16 +229,26 @@ class PacMan {
         }
         const [cx, cy] = p2g(this.x, this.y);
         const [px, py] = g2p(cx, cy);
-        if (Math.abs(this.x-px) <= this.speed && Math.abs(this.y-py) <= this.speed) {
+        const atCenter = Math.abs(this.x-px) <= this.speed && Math.abs(this.y-py) <= this.speed;
+        if (atCenter) {
             this.x = px; this.y = py;
-            if (canMove(maze, cx+this.nextDir[0], cy+this.nextDir[1])) this.dir = this.nextDir;
-            if (!canMove(maze, cx+this.dir[0], cy+this.dir[1])) this.dir = STOP;
+            // Try the queued next direction
+            const nx = cx + this.nextDir[0], ny = cy + this.nextDir[1];
+            if (canMove(maze, nx, ny)) {
+                this.dir = this.nextDir;
+            }
+            // If current direction is blocked, stop
+            const mx = cx + this.dir[0], my = cy + this.dir[1];
+            if (!canMove(maze, mx, my)) {
+                this.dir = STOP;
+            }
         }
+        // Move
         if (!dirEq(this.dir, STOP)) {
             this.x += this.dir[0] * this.speed;
             this.y += this.dir[1] * this.speed;
         }
-        // tunnel wrap
+        // Tunnel wrap
         if (this.x < -TILE/2) this.x = COLS*TILE + TILE/2;
         else if (this.x > COLS*TILE + TILE/2) this.x = -TILE/2;
     }
@@ -484,7 +496,7 @@ function countDots() {
 }
 
 function resetPositions() {
-    pacman = new PacMan(14, 18);
+    pacman = new PacMan(14, 17);
     const hc=14, hr=11;
     ghosts = [
         new Ghost('blinky', hc, hr-3, hc, hr),
@@ -540,7 +552,8 @@ canvas.addEventListener('touchend', e => {
 // --- Update --------------------------------------------------------------
 function update() {
     tick++;
-    if (inputDir) { pacman.setDir(inputDir); inputDir = null; }
+    if (inputDir) { pacman.setDir(inputDir); }
+    // Don't clear inputDir - nextDir stays queued until PacMan can turn
 
     if (state===STATE.READY) { if (--readyT<=0) state = STATE.PLAYING; return; }
     if (state===STATE.DYING) {
