@@ -243,7 +243,7 @@ class PacMan:
         cx, cy = pixel_to_grid(self.x, self.y)
         px, py = grid_to_pixel(cx, cy)
 
-        at_center = abs(self.x - px) <= self.speed and abs(self.y - py) <= self.speed
+        at_center = abs(self.x - px) < self.speed and abs(self.y - py) < self.speed
 
         if at_center:
             self.x, self.y = px, py
@@ -455,7 +455,7 @@ class Ghost:
         cx, cy = pixel_to_grid(self.x, self.y)
         px_center, py_center = grid_to_pixel(cx, cy)
 
-        at_center = abs(self.x - px_center) <= self.speed and abs(self.y - py_center) <= self.speed
+        at_center = abs(self.x - px_center) < self.speed and abs(self.y - py_center) < self.speed
 
         if at_center:
             self.x, self.y = px_center, py_center
