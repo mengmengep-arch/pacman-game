@@ -389,7 +389,7 @@ class Ghost {
         }
         const [cx,cy] = p2g(this.x, this.y);
         const [px,py] = g2p(cx, cy);
-        if (Math.abs(this.x-px)<=this.speed && Math.abs(this.y-py)<=this.speed) {
+        if (Math.abs(this.x-px)<this.speed && Math.abs(this.y-py)<this.speed) {
             this.x=px; this.y=py;
             const tgt = this.getTarget(pac, blinkyPos);
             const opp = [-this.dir[0], -this.dir[1]];
